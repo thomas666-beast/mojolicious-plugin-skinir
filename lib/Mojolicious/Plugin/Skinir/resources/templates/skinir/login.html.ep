@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="<%= $locale %>" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title><%= $tt->('sign_in') %> · <%= $name %></title>
+  <link rel="stylesheet" href="<%= $css_url %>">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('skinir-theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
+</head>
+<body class="h-full bg-slate-50 antialiased dark:bg-slate-950">
+  <main class="flex min-h-full flex-col items-center justify-center px-4 py-12">
+    <div class="w-full max-w-sm">
+      <div class="mb-8 flex flex-col items-center gap-3">
+% if ($logo) {
+        <img src="<%= $logo %>" alt="" class="h-12 w-auto">
+% } else {
+        <div class="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-xl font-bold text-white shadow-lg shadow-brand-600/30"><%= uc substr($name, 0, 1) %></div>
+% }
+        <h1 class="text-xl font-semibold text-slate-900 dark:text-white"><%= $name %></h1>
+      </div>
+
+      <form method="post" action="<%= $login_url %>" class="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        %= csrf_field
+% if ($error) {
+        <div role="alert" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300"><%= $error %></div>
+% }
+        <div>
+          <label for="identifier" class="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"><%= $tt->('login_identifier') %></label>
+          <input id="identifier" name="identifier" type="text" value="<%= $old %>" required autofocus autocomplete="username"
+                 class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+        </div>
+        <div>
+          <label for="password" class="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300"><%= $tt->('password') %></label>
+          <input id="password" name="password" type="password" required autocomplete="current-password"
+                 class="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+        </div>
+        <button type="submit" class="w-full rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-slate-900"><%= $tt->('sign_in') %></button>
+      </form>
+
+      <p class="mt-6 flex justify-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+% for my $l (@$locales) {
+        <a href="<%= $login_url %>?lang=<%= $l %>" class="<%= $l eq $locale ? 'font-semibold text-brand-600 dark:text-brand-400' : 'hover:text-slate-700 dark:hover:text-slate-200' %>"><%= uc $l %></a>
+% }
+      </p>
+    </div>
+  </main>
+</body>
+</html>

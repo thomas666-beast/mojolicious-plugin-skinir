@@ -1,0 +1,4 @@
+Revision history for Mojolicious-Plugin-Skinir
+
+0.01  Initial release: resources, fields, filters, actions, metrics, policies, i18n (en, fr),
+      Vue 3 + Tailwind 4 client.

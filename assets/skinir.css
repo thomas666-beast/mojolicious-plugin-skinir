@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/* Class based dark mode: <html class="dark"> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Brand palette. Each shade reads a CSS variable, so an app can re-theme the
+ * panel WITHOUT rebuilding Tailwind: add a stylesheet via the Skinir `styles`
+ * option containing e.g.   :root { --skinir-600: #0d9488; --skinir-700: #0f766e; }
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-brand-50:  var(--skinir-50,  #eef2ff);
+  --color-brand-100: var(--skinir-100, #e0e7ff);
+  --color-brand-200: var(--skinir-200, #c7d2fe);
+  --color-brand-300: var(--skinir-300, #a5b4fc);
+  --color-brand-400: var(--skinir-400, #818cf8);
+  --color-brand-500: var(--skinir-500, #6366f1);
+  --color-brand-600: var(--skinir-600, #4f46e5);
+  --color-brand-700: var(--skinir-700, #4338ca);
+  --color-brand-800: var(--skinir-800, #3730a3);
+  --color-brand-900: var(--skinir-900, #312e81);
+  --color-brand-950: var(--skinir-950, #1e1b4b);
+}
+
+[v-cloak] { display: none !important; }
+
+/* sources are scanned by assets/build.mjs; these hints are for the official Tailwind CLI */
+@source "./src";
+@source "../lib/Mojolicious/Plugin/Skinir/resources/templates";

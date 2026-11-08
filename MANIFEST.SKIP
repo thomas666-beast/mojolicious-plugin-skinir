@@ -1,0 +1,9 @@
+^assets/node_modules
+^assets/package-lock\.json
+^\.git/
+^blib/
+^Makefile$
+^Makefile\.old$
+^pm_to_blib$
+^MYMETA\.
+\.bak$

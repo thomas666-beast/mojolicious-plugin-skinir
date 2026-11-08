@@ -1,0 +1,13 @@
+{
+  "name": "skinir-assets",
+  "private": true,
+  "type": "module",
+  "description": "Build tooling for the Skinir admin client (Vue 3 + Tailwind CSS 4)",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^4.1.0"
+  }
+}
