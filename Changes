@@ -1,4 +1,13 @@
 Revision history for Mojolicious-Plugin-Skinir
 
+0.03  Add filtered CSV export with explicit columns and permissions, bounded batches,
+      spreadsheet-safe text handling and a from-scratch Mojolicious tutorial.
+
+0.02  Require explicit admin gate; make the default resource policy read-only.
+      Use app-bound Yggdrasil 0.05 queries and named connections throughout.
+      Add SQL visibility scopes, row checks on relations, validated action dispatch,
+      bounded API inputs and transaction-aware cleanup for managed uploads.
+      Include an executable SQLite demo, end-to-end tests and user documentation.
+
 0.01  Initial release: resources, fields, filters, actions, metrics, policies, i18n (en, fr),
       Vue 3 + Tailwind 4 client.

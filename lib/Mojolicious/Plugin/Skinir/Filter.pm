@@ -2,6 +2,7 @@ package Mojolicious::Plugin::Skinir::Filter;
 use Mojo::Base -base, -signatures;
 
 use Exporter 'import';
+use Mojo::JSON qw(true false);
 our @EXPORT_OK = qw(SelectFilter BooleanFilter TextFilter DateFilter);
 
 has [qw(label attribute type key options handler)];
@@ -24,6 +25,20 @@ sub option_list ($self) {
   my $o = $self->{options} // return [];
   return [map { +{value => $_, label => "$o->{$_}"} } sort { lc "$o->{$a}" cmp lc "$o->{$b}" } keys %$o] if ref $o eq 'HASH';
   return [map { ref $_ eq 'ARRAY' ? +{value => $_->[0], label => $_->[1] // $_->[0]} : +{value => $_, label => "$_"} } @$o];
+}
+
+sub valid_input ($self, $v) {
+  my $t = $self->type;
+  if ($t eq 'date') {
+    return ref $v eq 'HASH' && !grep {
+      $_ !~ /\A(?:from|to)\z/ || (defined($v->{$_}) && (ref($v->{$_}) || $v->{$_} !~ /\A(?:[0-9]{4}-[0-9]{2}-[0-9]{2})?\z/))
+    } keys %$v;
+  }
+  return 1 if $t eq 'boolean' && ref $v && (ref($v) eq ref(true) || ref($v) eq ref(false));
+  return 0 if ref $v || length($v) > 200;
+  return scalar grep { $_->{value} eq $v } @{$self->option_list} if $t eq 'select';
+  return $v =~ /\A(?:0|1|true|false)\z/i if $t eq 'boolean';
+  return 1;
 }
 
 sub apply ($self, $c, $q, $value) {

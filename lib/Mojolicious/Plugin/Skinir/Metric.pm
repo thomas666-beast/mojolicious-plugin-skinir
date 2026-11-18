@@ -8,7 +8,7 @@ use Time::Local qw(timegm);
 our @EXPORT_OK = qw(ValueMetric TrendMetric PartitionMetric);
 
 has [qw(key label type model aggregate column date_column unit prefix suffix decimals
-  ranges filter labels limit width group_by default_range)];
+  ranges filter labels limit width group_by default_range connection resource)];
 
 my %AGG = map { $_ => 1 } qw(count sum avg min max);
 
@@ -59,8 +59,19 @@ sub meta ($self, $c, $scope) {
 sub _ts ($epoch) { strftime('%Y-%m-%d %H:%M:%S', gmtime $epoch) }
 
 sub _query ($self, $c) {
-  my $class = $c->model($self->{model});
-  my $q = $class->query;
+  my $key = $self->resource // $c->stash('skinir.metric_resource');
+  my ($class, $q);
+  if (defined $key) {
+    my $res = $c->skinir->resource($key) or die "Skinir metric: unknown resource\n";
+    $class = $c->skinir->record($res);
+    die "Skinir metric: forbidden\n" unless $c->allowed('view_any', $class);
+    $q = $c->skinir->query($c, $res);
+  }
+  else {
+    my $orm = $c->yggdrasil;
+    $class = $orm->make_model($self->model, {}, using => $self->connection);
+    $q = $orm->model_query($self->model, using => $self->connection);
+  }
   $self->{filter}->($c, $q) if $self->{filter};
   return ($class, $q);
 }
@@ -120,7 +131,7 @@ sub _round ($self, $v) {
 sub calculate ($self, $c, $range = undef) {
   $range //= $self->{default_range};
   die "Skinir metric: range '$range' is not allowed\n"
-    if defined $range && @{$self->{ranges}} && !grep { "$_" eq "$range" } @{$self->{ranges}};
+    if defined $range && !grep { "$_" eq "$range" } @{$self->{ranges}};
   my $m = "_calc_$self->{type}";
   return $self->$m($c, $range);
 }
@@ -155,7 +166,8 @@ sub _calc_trend ($self, $c, $range) {
   die "Skinir trend metric needs a date_column\n" unless defined $self->{date_column};
   my $unit = $self->{unit} // 'day';
   die "Skinir trend metric: unit must be 'day' or 'month'\n" unless $unit =~ /\A(?:day|month)\z/;
-  my $n = $range =~ /\A\d+\z/ && $range > 0 ? $range : 30;
+  my $n = defined $range && $range =~ /\A\d+\z/ && $range > 0 ? $range : 30;
+  die "Skinir metric: trend range not allowed\n" if $n > 366;
 
   my ($class, $q) = $self->_query($c);
   my @t = gmtime;

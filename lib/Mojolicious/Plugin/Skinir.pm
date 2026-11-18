@@ -6,11 +6,11 @@ use Mojo::JSON qw(decode_json);
 use Mojo::Loader qw(find_modules load_class);
 use Mojo::Util qw(secure_compare);
 
-our $VERSION = '0.01';
+our $VERSION = '0.03';
 
 my $VUE_CDN = 'https://cdn.jsdelivr.net/npm/vue@3.5.13/dist/vue.global.prod.js';
 
-has [qw(app config resources auth user_class _lang _by_key)];
+has [qw(app config resources user_class _lang _by_key)];
 
 # ---------------------------------------------------------------------------------
 sub register ($self, $app, $conf) {
@@ -21,6 +21,7 @@ sub register ($self, $app, $conf) {
     locales          => [qw(en fr)],
     default_locale   => 'en',
     user_model       => 'User',
+    user_connection  => undef,
     login_field      => 'email',
     password_field   => 'password',
     name_field       => 'name',
@@ -44,17 +45,25 @@ sub register ($self, $app, $conf) {
   );
   $cfg{path} =~ s{/+\z}{};
   $cfg{path} = '/' . $cfg{path} if length $cfg{path} && $cfg{path} !~ m{\A/};
+  die "Skinir: path must be a non-root path such as /admin\n"
+    unless $cfg{path} =~ m{\A(?:/[A-Za-z0-9_-]+)+\z};
+  die "Skinir: configure gate => sub { ... } explicitly to allow panel access\n"
+    unless ref $cfg{gate} eq 'CODE';
+  die "Skinir: per_page_options must contain page sizes from 1 to 100\n"
+    unless ref($cfg{per_page_options}) eq 'ARRAY' && @{$cfg{per_page_options}}
+      && !(grep { !defined $_ || ref $_ || !/\A[1-9][0-9]{0,2}\z/ || $_ > 100 } @{$cfg{per_page_options}});
 
   $self->app($app)->config(\%cfg);
   $self->{attempts} = {};
 
   die "Mojolicious::Plugin::Skinir: load the Yggdrasil plugin first (it provides the models).\n"
-    unless _has_helper($app, 'model');
+    unless _has_helper($app, 'yggdrasil');
 
   $self->_load_dependencies($app, \%cfg);
   $self->_load_lang;
-  $self->user_class(Yggdrasil->instance->model($cfg{user_model}));
-  $self->_setup_auth($app, \%cfg);
+  $self->user_class($app->yggdrasil->model($cfg{user_model}));
+  die "Skinir: user model must have a single primary key\n" if ref $self->user_class->primary_key;
+  $app->yggdrasil->make_model($cfg{user_model}, {}, using => $cfg{user_connection});
   $self->_discover_resources($app, \%cfg);
   $self->_register_policies($app, \%cfg);
 
@@ -80,13 +89,12 @@ sub _has_helper ($app, $name) { exists $app->renderer->helpers->{$name} ? 1 : 0 
 sub _load_dependencies ($self, $app, $cfg) {
   require Mojolicious::Plugin::FormRequest::Base;
   require Yggdrasil;
+  Yggdrasil->VERSION('0.05');
 
   $app->plugin(Translatable => {default => $cfg->{default_locale}}) unless _has_helper($app, 'trans');
   $app->plugin(FormRequest => {}) unless _has_helper($app, 'form_request');
-  $app->plugin('Heimdall') unless _has_helper($app, 'heimdall');
-
   # unique:/exists: rules query the same database as the models
-  $app->config->{FormRequest}{db} //= sub ($c) { $c->db($c->stash('skinir.connection'))->dbh };
+  $app->config->{FormRequest}{db} //= sub ($c) { $c->yggdrasil->connection($c->stash('skinir.connection'))->dbh };
 }
 
 sub _load_lang ($self) {
@@ -99,15 +107,19 @@ sub _load_lang ($self) {
   $self->_lang(\%lang);
 }
 
-sub _setup_auth ($self, $app, $cfg) {
-  require Mojolicious::Plugin::Heimdall::Auth;
-  my $class = $self->user_class;
-  $self->auth(
-    Mojolicious::Plugin::Heimdall::Auth->new(
-      session_key => $cfg->{session_key},
-      load_user   => sub ($app, $id) { $class->find($id) },
-    )
-  );
+sub _passphrase ($self) {
+  require Crypt::Passphrase;
+  return $self->{passphrase} //= Crypt::Passphrase->new(encoder => 'Argon2', validators => ['Bcrypt']);
+}
+
+sub hash_password ($self, $c, $plain) {
+  return $c->heimdall->password->hash($plain) if _has_helper($c->app, 'heimdall');
+  return $self->_passphrase->hash_password($plain);
+}
+
+sub _verify_password ($self, $c, $plain, $hash) {
+  return $c->heimdall->password->verify($plain, $hash) if _has_helper($c->app, 'heimdall');
+  return $self->_passphrase->verify_password($plain, $hash);
 }
 
 sub _discover_resources ($self, $app, $cfg) {
@@ -124,6 +136,11 @@ sub _discover_resources ($self, $app, $cfg) {
     next unless $class->isa('Mojolicious::Plugin::Skinir::Resource');
     my $res = $class->new;
     my $key = $res->uri_key;
+    die "Skinir: invalid resource key '$key'\n" unless $key =~ /\A[a-z0-9][a-z0-9_-]*\z/;
+    my $record = $self->record($res);
+    die "Skinir: '$key' requires a single primary key\n" if ref $record->primary_key;
+    die "Skinir: '$key' per_page must be between 1 and 100\n"
+      unless $res->per_page =~ /\A[1-9][0-9]{0,2}\z/ && $res->per_page <= 100;
     die "Skinir: duplicate resource key '$key'\n" if $by{$key};
     $by{$key} = $res;
     push @list, $res;
@@ -134,11 +151,16 @@ sub _discover_resources ($self, $app, $cfg) {
 
 sub _register_policies ($self, $app, $cfg) {
   my %map = %{$cfg->{policies}};
-  my $ygg = Yggdrasil->instance;
+  my %declared;
   for my $res (@{$self->resources}) {
-    my $name = $ygg->model($res->model);
-    $name =~ s/\A.*:://;                       # Mojolicious::Plugin::Policy keys by last segment
-    $map{$name} //= $res->policy // 'Mojolicious::Plugin::Skinir::Policy';
+    my $model = $self->record($res);
+    my $name = $model->can('policy_name') ? $model->policy_name : ref $model;
+    $name =~ s/\A.*::// unless $model->can('policy_name');
+    next if exists $cfg->{policies}{$name};
+    my $policy = $res->policy // 'Mojolicious::Plugin::Skinir::Policy';
+    die "Skinir: conflicting policies for '$name'; configure one shared policy explicitly\n"
+      if exists($declared{$name}) && $declared{$name} ne $policy;
+    $map{$name} = $declared{$name} = $policy;
   }
   for my $class (values %map) {
     if (my $e = load_class($class)) { die ref $e ? $e : "Skinir: policy class '$class' not found\n" }
@@ -160,24 +182,58 @@ sub resource ($self, $ref) {
 sub url ($self, @parts) { join '/', $self->config->{path}, @parts }
 sub api_url ($self, @parts) { $self->url('skinir-api', @parts) }
 
+sub record ($self, $res) {
+  return $self->app->yggdrasil->make_model($res->model, {}, using => $res->connection);
+}
+
+sub query ($self, $c, $res, %opts) {
+  my $q = $self->app->yggdrasil->model_query($res->model, using => $res->connection, %opts);
+  return $res->scope_query($c, $q) // $q;
+}
+
+sub valid_id ($self, $model, $id) {
+  return 0 unless defined $id && !ref $id && $id =~ /\A[A-Za-z0-9_-]{1,64}\z/;
+  return 1 unless $model->incrementing;
+  return !!($id =~ /\A(?:0|[1-9][0-9]{0,18})\z/
+    && (length($id) < 19 || $id le '9223372036854775807'));
+}
+
+sub _users ($self) {
+  return $self->app->yggdrasil->model_query($self->config->{user_model}, using => $self->config->{user_connection});
+}
+
+sub new_user_record ($self) {
+  return $self->app->yggdrasil->make_model($self->config->{user_model}, {}, using => $self->config->{user_connection});
+}
+
 sub user ($self, $c) {
   my $st = $c->stash;
   return $st->{'skinir.user'} if exists $st->{'skinir.user'};
-  my $u = eval { $self->auth->current_user($c) };
-  $u = undef unless ref $u;
+  my $key = $self->config->{session_key};
+  my $id = $c->session->{$key};
+  my $until = $c->session->{"${key}_until"};
+  my $u = defined $id && defined $until && $until > time ? $self->_users->find($id) : undef;
   return $st->{'skinir.user'} = $u;
 }
 
 sub may_enter ($self, $c, $user) {
-  my $gate = $self->config->{gate} or return 1;
+  my $gate = $self->config->{gate};
   return $gate->($c, $user) ? 1 : 0;
 }
 
 # ---- authentication -------------------------------------------------------------------
 sub throttled ($self, $c) {
-  my $rec = $self->{attempts}{$c->tx->remote_address // '?'} or return 0;
+  my $ip = $c->tx->remote_address // '?';
   my $cfg = $self->config;
-  if (time - $rec->[1] > $cfg->{login_window}) { delete $self->{attempts}{$c->tx->remote_address // '?'}; return 0 }
+  my $rec = $self->{attempts}{$ip};
+  unless ($rec) {
+    my $attempts = $self->{attempts};
+    return 0 if keys(%$attempts) < 5000;
+    my $now = time;
+    delete $attempts->{$_} for grep { $now - $attempts->{$_}[1] >= $cfg->{login_window} } keys %$attempts;
+    return keys(%$attempts) >= 5000;
+  }
+  if (time - $rec->[1] >= $cfg->{login_window}) { delete $self->{attempts}{$ip}; return 0 }
   return $rec->[0] >= $cfg->{login_attempts} ? 1 : 0;
 }
 
@@ -185,26 +241,29 @@ sub _failed ($self, $c) {
   my $ip  = $c->tx->remote_address // '?';
   my $rec = $self->{attempts}{$ip} //= [0, time];
   $rec->[0]++;
-  # keep the table from growing without bound
-  if (keys %{$self->{attempts}} > 5000) { $self->{attempts} = {$ip => $rec} }
 }
 
 sub attempt ($self, $c, $identifier, $password) {
   my $cfg   = $self->config;
-  my $pw    = $c->heimdall->password;
-  my $class = $self->user_class;
+  if (length($identifier // '') > 320 || length($password // '') > 1024) {
+    $self->_failed($c);
+    return undef;
+  }
   my $user  = (defined $identifier && length $identifier && defined $password)
-    ? $class->query->where($cfg->{login_field}, $identifier)->first : undef;
+    ? $self->_users->where($cfg->{login_field}, $identifier)->first : undef;
 
   # always hash-verify so unknown accounts take as long as wrong passwords
   my $hash = $user ? $user->get_attribute($cfg->{password_field}) : undef;
-  $hash = ($self->{dummy} //= $pw->hash('skinir-dummy-password')) unless defined $hash && length $hash;
-  my $ok = eval { $pw->verify($password // '', $hash) } ? 1 : 0;
+  my $has_hash = defined $hash && length $hash;
+  $hash = ($self->{dummy} //= $self->hash_password($c, 'skinir-dummy-password')) unless $has_hash;
+  my $ok = eval { $self->_verify_password($c, $password // '', $hash) } ? 1 : 0;
 
-  if ($user && $ok && $self->may_enter($c, $user)) {
+  if ($user && $has_hash && $ok && $self->may_enter($c, $user)) {
     delete $self->{attempts}{$c->tx->remote_address // '?'};
-    $self->auth->login($c, $user->get_key);
-    $c->session(expiration => $cfg->{session_expires});
+    my $key = $cfg->{session_key};
+    $c->session->{$key} = $user->get_key;
+    $c->session->{"${key}_until"} = time + $cfg->{session_expires};
+    delete $c->session->{csrf_token};
     $c->stash('skinir.user' => $user);
     return $user;
   }
@@ -212,7 +271,11 @@ sub attempt ($self, $c, $identifier, $password) {
   return undef;
 }
 
-sub logout ($self, $c) { $self->auth->logout($c); delete $c->stash->{'skinir.user'}; }
+sub logout ($self, $c) {
+  my $key = $self->config->{session_key};
+  delete @{$c->session}{$key, "${key}_until", 'csrf_token'};
+  delete $c->stash->{'skinir.user'};
+}
 
 sub csrf_ok ($self, $c) {
   my $sent = $c->req->headers->header('X-CSRF-Token') // '';
@@ -267,7 +330,7 @@ sub upload_url  ($self, $rel) { join '/', $self->config->{uploads_url}, $rel }
 sub delete_upload ($self, $rel) {
   return unless defined $rel && $rel =~ m{\Askinir/[A-Za-z0-9_-]+/[a-f0-9]{40}\.[a-z0-9]+\z};
   my $f = $self->upload_path($rel);
-  unlink "$f" if -f "$f";
+  $self->app->log->warn("Skinir: unable to remove managed upload '$rel': $!") if -f "$f" && !unlink "$f";
   return;
 }
 
@@ -291,6 +354,7 @@ sub _routes ($self, $app, $cfg) {
   $r->post('/')->to('resources#store');
   $r->get('/creation-fields')->to('resources#creation_fields');
   $r->post('/bulk')->to('resources#bulk');
+  $r->post('/export')->to('resources#export_csv');
   $r->post('/actions/:action_key')->to('resources#run_action');
   $r->get('/options/:attribute')->to('resources#options');
   $r->get('/:id')->to('resources#show');
@@ -308,6 +372,7 @@ sub _routes ($self, $app, $cfg) {
 }
 
 sub _guard_page ($self, $c) {
+  $c->res->headers->cache_control('no-store');
   my $u = $self->user($c);
   return 1 if $u && $self->may_enter($c, $u);
   $c->session(skinir_return_to => $c->req->url->path->to_string) if $c->req->method eq 'GET';
@@ -316,6 +381,7 @@ sub _guard_page ($self, $c) {
 }
 
 sub _guard_api ($self, $c) {
+  $c->res->headers->cache_control('no-store');
   my $u = $self->user($c);
   unless ($u) { $c->render(json => {message => 'Unauthenticated'}, status => 401); return undef }
   unless ($self->may_enter($c, $u)) { $c->render(json => {message => 'Forbidden'}, status => 403); return undef }
@@ -344,13 +410,14 @@ Mojolicious::Plugin::Skinir - a Nova-style admin panel (Vue 3 + Tailwind) for Mo
     path      => '/admin',
     name      => 'My Panel',
     namespace => 'MyApp::Resource',
+    gate      => sub { $_[1]->get_attribute('is_admin') },
   });
 
 =head1 DESCRIPTION
 
-Skinir builds a complete admin panel from resource classes. It composes
-Yggdrasil (models, any of SQLite / PostgreSQL / MariaDB), FormRequest
-(validation), Policy (authorization), Heimdall (sessions, password hashing)
-and Translatable (i18n). See the distribution README.
+Skinir builds an admin panel from resource classes. It composes Yggdrasil
+(models), FormRequest (validation), Policy (authorization) and Translatable
+(i18n). Login uses Mojolicious sessions and Argon2 by default. See the README
+and user guide for installation, permission setup and the SQLite demo.
 
 =cut

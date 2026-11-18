@@ -5,7 +5,7 @@ use Mojo::File qw(path);
 use Mojo::UserAgent;
 use Mojo::Util qw(getopt);
 
-our $VERSION = '0.01';
+our $VERSION = '0.03';
 
 has description => 'Skinir admin panel tools';
 has usage       => <<'USAGE';
@@ -51,6 +51,7 @@ sub _make_resource ($self, @args) {
 
   (my $base = $name) =~ s{.*/}{};
   $model //= $base;
+  return say "Invalid model: $model" unless $model =~ /\A[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*\z/;
   my $app = ref $self->app;
   my $pkg = "${app}::Resource::" . join('::', split m{/}, $name);
 
@@ -89,7 +90,7 @@ sub _make_policy ($self, @args) {
 package $pkg;
 use Mojo::Base 'Mojolicious::Plugin::Skinir::Policy', -signatures;
 
-# Inherited defaults allow every signed-in panel user.
+# Inherited defaults are read-only for signed-in panel users.
 # Override per ability; each receives (\$self, \$c, \$model) and returns true to allow.
 # view_any and create receive a blank model.
 
@@ -117,22 +118,23 @@ sub _make_user ($self, @args) {
     system('stty', 'echo') if -t STDIN;
     print "\n";
   }
-  return say 'Password must be at least 10 characters.' unless length($pw) >= 10;
+  return say 'Password must contain 10 to 1024 characters.' unless length($pw) >= 10 && length($pw) <= 1024;
+  return say 'Login identifier must be at most 320 characters.' if length($email) > 320;
 
-  my $class = $s->user_class;
+  my $u = $s->new_user_record;
   return say "A user with that $cfg->{login_field} already exists."
-    if $class->query->where($cfg->{login_field}, $email)->first;
+    if $u->query->where($cfg->{login_field}, $email)->first;
 
   my $c = $self->app->build_controller;
   my %attrs = (
     $cfg->{login_field}    => $email,
     $cfg->{name_field}     => ($name // $email),
-    $cfg->{password_field} => $c->heimdall->password->hash($pw),
+    $cfg->{password_field} => $s->hash_password($c, $pw),
   );
-  my $u = $class->new;
   $u->force_fill(\%attrs);
   $u->save;
   say "Created user #" . $u->get_key . " <$email>";
+  say 'Assign access through your application before this user can pass the Skinir gate.';
 }
 
 sub _assets_vue ($self, @args) {

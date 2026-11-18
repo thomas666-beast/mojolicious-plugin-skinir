@@ -31,7 +31,9 @@ sub handle ($self, $c, $models, $fields) {
   return $cb->($c, $models, $fields);
 }
 
-sub required_ability ($self) { $self->{ability} // ($self->{destructive} ? 'delete' : 'update') }
+sub required_ability ($self) {
+  return $self->{ability} // ($self->{standalone} ? 'run_action' : $self->{destructive} ? 'delete' : 'update');
+}
 
 sub field_list ($self, $c) {
   my $f = $self->{fields} // [];

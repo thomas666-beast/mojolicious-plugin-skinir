@@ -1,7 +1,7 @@
 package Mojolicious::Plugin::Skinir::Policy;
 use Mojo::Base -base, -signatures;
 
-# Default policy: any authenticated panel user may do everything.
+# Default policy: authenticated panel users may only read.
 # Subclass it and override only what you need:
 #
 #   package MyApp::Policy::Post;
@@ -15,10 +15,12 @@ sub _signed_in ($self, $c) { $c->skinir_user ? 1 : 0 }
 
 sub view_any     ($self, $c, $m) { $self->_signed_in($c) }
 sub view         ($self, $c, $m) { $self->_signed_in($c) }
-sub create       ($self, $c, $m) { $self->_signed_in($c) }
-sub update       ($self, $c, $m) { $self->_signed_in($c) }
-sub delete       ($self, $c, $m) { $self->_signed_in($c) }
-sub restore      ($self, $c, $m) { $self->_signed_in($c) }
-sub force_delete ($self, $c, $m) { $self->_signed_in($c) }
+sub create       ($self, $c, $m) { 0 }
+sub update       ($self, $c, $m) { 0 }
+sub delete       ($self, $c, $m) { 0 }
+sub restore      ($self, $c, $m) { 0 }
+sub force_delete ($self, $c, $m) { 0 }
+sub run_action   ($self, $c, $m) { 0 }
+sub export       ($self, $c, $m) { 0 }
 
 1;

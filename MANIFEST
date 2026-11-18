@@ -1,0 +1,47 @@
+.gitignore
+assets/build.mjs
+assets/package.json
+assets/skinir.css
+assets/src/01-core.js
+assets/src/02-components.js
+assets/src/03-views.js
+assets/src/04-boot.js
+Changes
+docs/Build-Your-First-Skinir-App.md
+docs/Skinir-0.03-User-Guide.md
+examples/lib/SkinirDemo.pm
+examples/skinir-demo
+lib/Mojolicious/Command/skinir.pm
+lib/Mojolicious/Plugin/Skinir.pm
+lib/Mojolicious/Plugin/Skinir/Action.pm
+lib/Mojolicious/Plugin/Skinir/Controller/Auth.pm
+lib/Mojolicious/Plugin/Skinir/Controller/Meta.pm
+lib/Mojolicious/Plugin/Skinir/Controller/Resources.pm
+lib/Mojolicious/Plugin/Skinir/Controller/Shell.pm
+lib/Mojolicious/Plugin/Skinir/Field.pm
+lib/Mojolicious/Plugin/Skinir/Fields.pm
+lib/Mojolicious/Plugin/Skinir/Filter.pm
+lib/Mojolicious/Plugin/Skinir/Metric.pm
+lib/Mojolicious/Plugin/Skinir/Policy.pm
+lib/Mojolicious/Plugin/Skinir/Resource.pm
+lib/Mojolicious/Plugin/Skinir/resources/lang/en.json
+lib/Mojolicious/Plugin/Skinir/resources/lang/fr.json
+lib/Mojolicious/Plugin/Skinir/resources/public/skinir/app.js
+lib/Mojolicious/Plugin/Skinir/resources/public/skinir/skinir.css
+lib/Mojolicious/Plugin/Skinir/resources/templates/skinir/login.html.ep
+lib/Mojolicious/Plugin/Skinir/resources/templates/skinir/shell.html.ep
+Makefile.PL
+MANIFEST			This list of files
+MANIFEST.SKIP
+README.md
+t/01-field.t
+t/02-resource.t
+t/03-filter.t
+t/04-metric.t
+t/05-lang.t
+t/06-assets.t
+t/07-integration.t
+t/08-csv.t
+t/lib_fakes.pl
+META.yml                                 Module YAML meta-data (added by MakeMaker)
+META.json                                Module JSON meta-data (added by MakeMaker)

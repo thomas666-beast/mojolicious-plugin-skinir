@@ -2,7 +2,7 @@ package Mojolicious::Plugin::Skinir::Field;
 use Mojo::Base -base, -signatures;
 
 use Mojo::JSON qw(decode_json);
-use Mojo::Util qw(sha1_sum);
+use Crypt::URandom qw(urandom);
 use Scalar::Util qw(blessed looks_like_number);
 
 our @CONTEXTS = qw(index detail create update);
@@ -153,7 +153,8 @@ sub display ($self, $c, $model) {
 
   if ($t eq 'belongs_to') {
     return undef unless defined $v && length $v;
-    return {id => $v, title => $self->{_titles}{$v} // "#$v"};
+    my $titles = $c->stash->{'skinir.titles'}{"$self"} // {};
+    return exists $titles->{$v} ? {id => $v, title => $titles->{$v}} : undef;
   }
 
   return undef unless defined $v;
@@ -176,7 +177,7 @@ sub form_value ($self, $c, $model) {
   }
   return $self->display($c, $model) if $t ne 'belongs_to';
   my $v = $self->raw($c, $model);
-  return $v;
+  return defined $v && exists(($c->stash->{'skinir.titles'}{"$self"} // {})->{$v}) ? $v : undef;
 }
 
 sub _json_text ($self, $v) {
@@ -194,14 +195,17 @@ sub related_resource ($self, $c) {
 
 # Batch-load the titles of related rows for a page of models (one query).
 sub prefetch ($self, $c, $models) {
-  return unless $self->{type} eq 'belongs_to' && @$models;
+  return unless $self->{type} eq 'belongs_to';
+  my $titles = $c->stash->{'skinir.titles'}{"$self"} = {};
+  return unless @$models;
   my $rres = $self->related_resource($c) or return;
-  my $rcls = $c->model($rres->model);
+  my $rcls = $c->skinir->record($rres);
+  return unless $c->allowed('view_any', $rcls);
   my %seen;
   my @ids = grep { defined $_ && length $_ && !$seen{$_}++ } map { $_->get_attribute($self->{attribute}) } @$models;
   return unless @ids;
-  my $rows = $rcls->query->where_in($rcls->primary_key, \@ids)->get;
-  $self->{_titles}{$_->get_key} = $rres->title_of($_) for @$rows;
+  my $rows = $c->skinir->query($c, $rres)->where_in($rcls->primary_key, \@ids)->get;
+  $titles->{$_->get_key} = $rres->title_of($_) for grep { $c->allowed('view', $_) } @$rows;
   return;
 }
 
@@ -210,13 +214,22 @@ sub panel ($self, $c, $model, $limit = 5) {
   my $rres = $self->related_resource($c) or return undef;
   my $rel  = $self->{relation} // $self->{attribute};
   return undef unless $model->can($rel);
-  my $total = $model->$rel->count;
-  my @rows  = map { +{id => $_->get_key, title => $rres->title_of($_)} } @{$model->$rel->limit($limit)->get};
+  my $related = $model->$rel;
+  my $target = $c->skinir->record($rres);
+  return undef unless blessed($related) && $related->isa('Yggdrasil::Relation::HasMany')
+    && $related->related eq ref($target) && $related->query->connection == $target->connection;
+  my $q = $related->query;
+  $q = $rres->scope_query($c, $q) // $q;
+  my $max = $self->rows_limit // $limit;
+  $max = $limit unless $max =~ /\A[1-9][0-9]?\z/;
+  $max = 50 if $max > 50;
+  my @rows = map { +{id => $_->get_key, title => $rres->title_of($_)} }
+    grep { $c->allowed('view', $_) } @{$q->order_by($target->primary_key, 'asc')->limit($max)->get};
   return {
     attribute => $self->{attribute},
     label     => $self->{label},
     resource  => $rres->uri_key,
-    total     => $total,
+    total     => scalar @rows,
     rows      => \@rows,
   };
 }
@@ -247,7 +260,9 @@ sub check_upload ($self, $c, $mode) {
   my $max = ($self->{max_kb} // 5120) * 1024;
   return 'is too large' if $up->size > $max;
   my ($ext) = lc($up->filename // '') =~ /\.([a-z0-9]+)\z/;
-  return 'has an unsupported file type' unless defined $ext && grep { $_ eq $ext } @{$self->allowed_extensions};
+  return 'has an unsupported file type'
+    unless defined $ext && $ext !~ /\A(?:s?html?|xhtml|svgz?|m?js|css|xml|wasm)\z/
+      && grep { $_ eq $ext } @{$self->allowed_extensions};
   return undef;
 }
 
@@ -258,15 +273,16 @@ sub _store_upload ($self, $c, $model) {
   if ($up && $up->size) {
     my ($ext) = lc($up->filename) =~ /\.([a-z0-9]+)\z/;
     my $rel   = join '/', 'skinir', $c->stash('skinir.resource_key') // 'files',
-      sha1_sum(join ':', $$, time, rand, $up->filename) . ".$ext";
+      unpack('H*', urandom(20)) . ".$ext";
     my $dest = $c->skinir->upload_path($rel);
     $dest->dirname->make_path;
+    push @{$c->stash->{'skinir.new_files'}}, $rel;
     $up->move_to("$dest");
-    $c->skinir->delete_upload($old) if defined $old && length $old;
+    push @{$c->stash->{'skinir.old_files'}}, $old if defined $old && length $old;
     $model->set_attribute($self->{attribute}, $rel);
   }
   elsif ($c->param("__clear_$self->{attribute}")) {
-    $c->skinir->delete_upload($old) if defined $old && length $old;
+    push @{$c->stash->{'skinir.old_files'}}, $old if defined $old && length $old;
     $model->set_attribute($self->{attribute}, undef);
   }
   return;
@@ -312,12 +328,6 @@ sub compile_rules ($self, $c, $mode, $class, $record_id = undef) {
     push @parts, "min:$self->{min}" if defined $self->{min} && looks_like_number($self->{min});
     push @parts, "max:$self->{max}" if defined $self->{max} && looks_like_number($self->{max});
   }
-  if ($t eq 'belongs_to') {
-    if (my $rres = $self->related_resource($c)) {
-      my $rcls = $c->model($rres->model);
-      push @parts, 'exists:' . $rcls->table . ',' . $rcls->primary_key;
-    }
-  }
   if ($self->{unique}) {
     my $table  = $self->{unique}{table}  // $class->table;
     my $column = $self->{unique}{column} // $self->{attribute};
@@ -327,7 +337,16 @@ sub compile_rules ($self, $c, $mode, $class, $record_id = undef) {
   }
 
   my @code;
-  if ($t eq 'select') {
+  if ($t eq 'belongs_to') {
+    push @code, sub ($value, $args, $params, $ctx) {
+      my $rres = $self->related_resource($c) or return 0;
+      my $target = $c->skinir->record($rres);
+      return 0 unless $c->allowed('view_any', $target) && $c->skinir->valid_id($target, $value);
+      my $m = $c->skinir->query($c, $rres)->find($value);
+      return $m && $c->allowed('view', $m);
+    };
+  }
+  elsif ($t eq 'select') {
     my %ok = map { ($_->{value} => 1) } @{$self->option_list($c)};
     push @code, sub ($value, $args, $params, $ctx) { exists $ok{$value} };
   }
@@ -386,7 +405,7 @@ sub fill ($self, $c, $model, $data) {
 
   if ($self->{type} eq 'password') {
     return unless defined $v && length $v;               # blank = keep current hash
-    $v = $c->heimdall->password->hash($v);
+    $v = $c->skinir->hash_password($c, $v);
     $model->set_attribute($attr, $v);
     return;
   }

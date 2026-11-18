@@ -40,7 +40,7 @@ C['view-index'] = {
     const st = reactive({
       loading: true, error: null, res: null, rows: [], meta: null, selected: [],
       search: '', page: 1, perPage: null, orderBy: null, orderDir: 'asc', trashed: '', filters: {},
-      showFilters: false, bulk: '', modal: null,
+      showFilters: false, bulk: '', modal: null, exporting: false,
     });
 
     function readUrl() {
@@ -103,6 +103,24 @@ C['view-index'] = {
     }
 
     function apply() { st.page = 1; load(); }
+    async function exportCsv() {
+      if (st.exporting || !st.res?.can_export) return;
+      const resource = props.resource;
+      const {page, per_page, ...filters} = query();
+      st.exporting = true;
+      try {
+        const blob = await api('POST', '/resources/' + encodeURIComponent(resource) + '/export' + qs(filters), undefined, 'text/csv');
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = resource + '.csv';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 1000);
+      } catch (e) { toast('error', e.message); }
+      finally { st.exporting = false; }
+    }
     function resetFilters() { st.filters = {}; st.trashed = ''; apply(); }
     function goPage(p) { st.page = p; load(); }
     function sortBy(col) {
@@ -240,7 +258,7 @@ C['view-index'] = {
 
     return {
       st, R, S, load, apply, resetFilters, goPage, sortBy, setDate, filterCount, allSelected, toggleAll, toggle,
-      bulkOps, standalone, runBulk, startAction, submitModal, removeRow, restoreRow, forceRow, pages,
+      bulkOps, standalone, runBulk, startAction, submitModal, removeRow, restoreRow, forceRow, pages, exportCsv,
     };
   },
   template: `
@@ -254,6 +272,8 @@ C['view-index'] = {
         <div class="flex flex-wrap items-center justify-between gap-3">
           <h1 class="text-2xl font-semibold text-slate-900 dark:text-white">{{ st.res ? st.res.label : '' }}</h1>
           <div v-if="st.res" class="flex flex-wrap items-center gap-2">
+            <button v-if="st.res.can_export" type="button" :class="B.secondary" :disabled="st.exporting || st.loading"
+                    @click="exportCsv">{{ t(st.exporting ? 'exporting_csv' : 'export_csv') }}</button>
             <button v-for="a in standalone" :key="a.key" type="button" :class="a.destructive ? B.danger : B.secondary" @click="startAction(a)">{{ a.name }}</button>
             <s-link v-if="st.res.can_create" :to="R.create(resource)" :class="B.primary"><s-icon name="plus" sm />{{ t('create_resource', { resource: st.res.singular }) }}</s-link>
           </div>

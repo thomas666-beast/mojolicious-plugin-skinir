@@ -6,4 +6,5 @@
 ^Makefile\.old$
 ^pm_to_blib$
 ^MYMETA\.
+^Mojolicious-Plugin-Skinir-[^/]+(?:\.tar(?:\.gz)?|/.*)$
 \.bak$

@@ -8,8 +8,7 @@ sub bootstrap ($c) {
 
   my (%groups, @order);
   for my $res (@{$s->resources}) {
-    my $class = $c->model($res->model);
-    next unless $c->allowed('view_any', $class->new);
+    next unless $c->allowed('view_any', $s->record($res));
     my $g = $res->group;
     push @order, $g unless $groups{$g};
     push @{$groups{$g}}, {
@@ -47,9 +46,10 @@ sub _dashboard_cards ($c) {
 
 sub set_locale ($c) {
   my $s = $c->skinir;
-  my $l = $c->req->json->{locale} // '';
+  my $body = $c->req->json;
+  my $l = ref $body eq 'HASH' ? $body->{locale} // '' : '';
   return $c->render(json => {message => 'Unknown locale'}, status => 422)
-    unless grep { $_ eq $l } @{$s->config->{locales}};
+    unless !ref($l) && grep { $_ eq $l } @{$s->config->{locales}};
   $c->locale($l);
   $c->render(json => {ok => \1});
 }
@@ -57,9 +57,12 @@ sub set_locale ($c) {
 sub _metric_response ($c, $metrics, $scope) {
   my ($m) = grep { $_->key eq $c->stash('key') } @$metrics;
   return $c->render(json => {message => 'Unknown metric'}, status => 404) unless $m;
-  my $res = eval { $m->calculate($c, scalar $c->param('range')) };
+  my $range = $c->param('range');
+  return $c->render(json => {message => 'Range not allowed'}, status => 422) if length($range // '') > 16;
+  my $res = eval { $m->calculate($c, $range) };
   if (my $e = $@) {
     return $c->render(json => {message => 'Range not allowed'}, status => 422) if $e =~ /not allowed/;
+    return $c->render(json => {message => 'Forbidden'}, status => 403) if $e eq "Skinir metric: forbidden\n";
     $c->app->log->error("Skinir metric '" . $m->key . "' failed: $e");
     return $c->render(json => {message => 'Metric failed'}, status => 500);
   }
@@ -72,8 +75,8 @@ sub resource_metric ($c) {
   my $s   = $c->skinir;
   my $res = $s->resource($c->stash('resource'))
     or return $c->render(json => {message => 'Unknown resource'}, status => 404);
-  my $class = $c->model($res->model);
-  return $c->render(json => {message => 'Forbidden'}, status => 403) unless $c->allowed('view_any', $class->new);
+  return $c->render(json => {message => 'Forbidden'}, status => 403) unless $c->allowed('view_any', $s->record($res));
+  $c->stash('skinir.metric_resource' => $res->uri_key);
   $c->_metric_response($res->cards($c), $res->uri_key);
 }
 

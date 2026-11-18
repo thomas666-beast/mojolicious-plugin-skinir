@@ -86,8 +86,8 @@ function safeUrl(u) { return typeof u === 'string' && /^https?:\/\//i.test(u) ? 
 // ---------------------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------------------
-async function api(method, path, body) {
-  const headers = { 'Accept': 'application/json', 'X-CSRF-Token': CFG.csrf };
+async function api(method, path, body, accept = 'application/json') {
+  const headers = { 'Accept': accept, 'X-CSRF-Token': CFG.csrf };
   let payload;
   if (typeof FormData !== 'undefined' && body instanceof FormData) payload = body;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
@@ -99,6 +99,8 @@ async function api(method, path, body) {
     const err = new Error(t('error_network')); err.status = 0; throw err;
   }
   if (res.status === 401) { window.location.href = CFG.base + '/login'; throw new Error('Unauthenticated'); }
+  if (res.ok && accept === 'text/csv' && res.headers.get('Content-Type')?.startsWith('text/csv')) return res.blob();
+  if (res.ok && accept === 'text/csv') throw new Error(t('error_generic'));
 
   let data = null;
   try { data = await res.json(); } catch (e) { /* empty body */ }

@@ -49,18 +49,20 @@ sub search   ($self) { [] }              # columns searched with ILIKE
 sub per_page ($self) { 25 }
 sub group    ($self) { 'Resources' }
 sub icon     ($self) { 'collection' }
-sub policy   ($self) { undef }           # class name; default: allow any panel user
+sub policy   ($self) { undef }           # class name; default: read-only for panel users
 sub eager    ($self) { [] }              # relations to include() on the index query
 sub order    ($self) { undef }           # e.g. [['created_at', 'desc']]
-sub connection ($self) { undef }         # named Yggdrasil connection for unique/exists rules
+sub connection ($self) { undef }         # named Yggdrasil connection for reads, writes and validation
 
 sub fields  ($self, $c) { [] }
 sub filters ($self, $c) { [] }
 sub actions ($self, $c) { [] }
 sub cards   ($self, $c) { [] }
+sub csv_columns ($self, $c) { [] }        # exportable index field attributes, in output order
 
 # ---- hooks ---------------------------------------------------------------------------
 sub index_query  ($self, $c, $q) { $q }
+sub scope_query  ($self, $c, $q) { $q }       # authorization scope used across resource queries
 sub before_save  ($self, $c, $model, $mode) { }    # $mode: create | update
 sub after_save   ($self, $c, $model, $mode) { }
 sub before_delete ($self, $c, $model) { }

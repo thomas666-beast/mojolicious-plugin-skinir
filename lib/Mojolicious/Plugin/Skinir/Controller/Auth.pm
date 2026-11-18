@@ -3,6 +3,7 @@ use Mojo::Base 'Mojolicious::Controller', -signatures;
 
 sub _render_login ($c, %extra) {
   my $s = $c->skinir;
+  $c->res->headers->cache_control('no-store');
   if (my $l = $c->param('lang')) { $c->locale($l) if grep { $_ eq $l } @{$s->config->{locales}} }
   $c->render(
     template => 'skinir/login',
